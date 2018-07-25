@@ -1,0 +1,18 @@
+{
+  "wifi-config": [
+    {
+      "ssid": "Patty",
+      "pass": "chakra7777777"
+    },
+    {
+      "ssid": "WMM",
+      "pass": "Mult!med!A"
+    }
+  ],
+  "wifi-connect-retries" : 3,
+  "wifi-AP": {
+    "ssid": "WifiAP-config",
+    "pass": "1234"
+  },
+  "mqtt-enabled": false
+}
