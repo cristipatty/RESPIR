@@ -12,6 +12,7 @@
 #define IR_LED D2 // 4  // ESP8266 GPIO pin to use. Recommended: 4 (D2).
 #define BAUD_RATE 115200
 #define CAPTURE_BUFFER_SIZE 1024
+#define IR_SEND_KHz 38
 
 #define TIMEOUT 50U  // Some A/C units have gaps in their protocols of ~40ms.
                      // e.g. Kelvinator
@@ -92,6 +93,8 @@ void irCheck() {
     // Output the results as source code
     Serial.println(resultToSourceCode(&results));
     Serial.println("");  // Blank line between entries
+    Serial.print("IRCode hash: ");
+    Serial.println((long)(results.value));
     yield();  // Feed the WDT (again)
 
     if (now - irSentTs > 1000) {
@@ -102,7 +105,36 @@ void irCheck() {
 }
 
 void sendCode(decode_results* results) {
-  
+  uint16_t rawLength = getCorrectedRawLength(results);
+  uint16_t rawData[rawLength];
+  uint16_t idx = 0;
+  // Dump data
+  for (uint16_t i = 1; i < results->rawlen; i++) {
+    uint32_t usecs;
+    for (usecs = results->rawbuf[i] * RAWTICK;
+         usecs > UINT16_MAX;
+         usecs -= UINT16_MAX) {
+      rawData[idx++] = UINT16_MAX;
+    }
+    rawData[idx++] = usecs;
+  }
+
+  if (rawLength != idx) {
+    Serial.print("CorrectedRawLength=");
+    Serial.print(rawLength);
+    Serial.print(" iterated_length=");
+    Serial.print(idx);
+    Serial.println(" ERROR! Will not send code");
+    return;
+  }
+
+  Serial.print("Sending IR code of ");
+  Serial.print(rawLength);
+  Serial.println(" length");
+
+  irsend.sendRaw(rawData, rawLength, IR_SEND_KHz);
+  irSentTs = millis();
+  Serial.println("");
 }
 
 bool setupFS() {
