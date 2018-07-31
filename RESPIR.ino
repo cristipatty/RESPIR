@@ -14,21 +14,18 @@
 #define CAPTURE_BUFFER_SIZE 1024
 #define IR_SEND_KHz 38
 
-#define TIMEOUT 50U  // Some A/C units have gaps in their protocols of ~40ms.
+#define TIMEOUT 15U  // Some A/C units have gaps in their protocols of ~40ms.
                      // e.g. Kelvinator
                      // A value this large may swallow repeats of some protocols
 
 #define MIN_UNKNOWN_SIZE 12
-// Use turn on the save buffer feature for more complete capture coverage.
-  IRrecv irrecv(RECV_PIN, CAPTURE_BUFFER_SIZE, TIMEOUT, true);
-  IRsend irsend(IR_LED);  // Set the GPIO to be used to sending the message.
-  decode_results results;  // Somewhere to store the results
-  bool irSend = true;
-  unsigned long irSentTs = 0;
 
-// Needed for WEB and flash filesystem access (SPIFFS)
-//#include <ESP8266WiFi.h>
-//#include <ESP8266WebServer.h>
+// Initialization
+
+// Use turn on the save buffer feature for more complete capture coverage.
+IRrecv irrecv(RECV_PIN, CAPTURE_BUFFER_SIZE, TIMEOUT, true);
+IRsend irsend(IR_LED);  // Set the GPIO to be used to sending the message.
+decode_results results;  // Somewhere to store the results
 
 // The section of code run only once at start-up.
 void setup() {
@@ -39,12 +36,9 @@ void setup() {
   Serial.print("RESPIR is now running and waiting for IR input on Pin ");
   Serial.println(RECV_PIN);
 
-  // Ignore messages with less than minimum on or off pulses.
-  irrecv.setUnknownThreshold(MIN_UNKNOWN_SIZE);
-  irrecv.enableIRIn();  // Start the receiver
   irsend.begin();
 
-  if (setupFS()) {
+  if (setupFS(false)) {
 //    setupWifi();
   }
 
@@ -52,22 +46,22 @@ void setup() {
 //    Serial.println("Could not set-up Wifi management!");
 //  }
 
+  // Ignore messages with less than minimum on or off pulses.
+  irrecv.setUnknownThreshold(MIN_UNKNOWN_SIZE);
+  irrecv.enableIRIn();  // Start the receiver
+
 }
 
 void loop() {
-  irCheck();
+  irReceiveLoop();
 }
 
-// Display the human readable state of an A/C message if we can.
-void dumpACInfo(decode_results *results) {
-  String description = "";
-  // If we got a human-readable description of the message, display it.
-  if (description != "")  Serial.println("Mesg Desc.: " + description);
-}
+long receiveAndReSendCounter = 0;
 
-void irCheck() {
+void irReceiveLoop() {
   // Check if the IR code has been received.
   if (irrecv.decode(&results)) {
+    receiveAndReSendCounter ++;
     // Display a crude timestamp.
     uint32_t now = millis();
     Serial.printf("Timestamp : %06u.%03u\n", now / 1000, now % 1000);
@@ -76,19 +70,9 @@ void irCheck() {
                     "This result shouldn't be trusted until this is resolved. "
                     "Edit & increase CAPTURE_BUFFER_SIZE.\n",
                     CAPTURE_BUFFER_SIZE);
-    // Display the basic output of what we found.
-    Serial.print(resultToHumanReadableBasic(&results));
-    dumpACInfo(&results);  // Display any extra A/C info if we have it.
-    yield();  // Feed the WDT as the text output can take a while to print.
-
-    // Display the library version the message was captured with.
-    Serial.print("IRRemoteESP8266 Library   : v");
-    Serial.println(_IRREMOTEESP8266_VERSION_);
-    Serial.println();
-
     // Output RAW timing info of the result.
     Serial.println(resultToTimingInfo(&results));
-    yield();  // Feed the WDT (again)
+    yield();  // Feed the WDT
 
     // Output the results as source code
     Serial.println(resultToSourceCode(&results));
@@ -97,14 +81,26 @@ void irCheck() {
     Serial.println((long)(results.value));
     yield();  // Feed the WDT (again)
 
-    if (now - irSentTs > 1000) {
+    // Test purposes:
+    // re-send the last code, but avoid a send-receive infinite loop
+    // so call sendCode, after every other receive
+    if (receiveAndReSendCounter & 1) {
+      Serial.print("receiveAndReSendCounter=");
+      Serial.print(receiveAndReSendCounter);
+      Serial.println(" will re-send code...");
         // testing purpoes
       sendCode(&results);
     }
   }
 }
 
-void sendCode(decode_results* results) {
+void sendCode(const decode_results* results) {
+  if ((long)(results->value) < -1L) {
+    Serial.print("Code < 0: ");
+    Serial.print((long)(results->value));
+    Serial.println(" is invalid!");
+    return;
+  }
   uint16_t rawLength = getCorrectedRawLength(results);
   uint16_t rawData[rawLength];
   uint16_t idx = 0;
@@ -132,12 +128,17 @@ void sendCode(decode_results* results) {
   Serial.print(rawLength);
   Serial.println(" length");
 
+  // DEBUG:
+  for (int i=0; i<rawLength; i++) {
+    Serial.print(rawData[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+
   irsend.sendRaw(rawData, rawLength, IR_SEND_KHz);
-  irSentTs = millis();
-  Serial.println("");
 }
 
-bool setupFS() {
+bool setupFS(bool format) {
   Serial.println("Mounting FS...");
   if (!SPIFFS.begin()) {
     Serial.println("FS error!");
@@ -146,15 +147,33 @@ bool setupFS() {
 
   Serial.println("FS contents:");
   Dir dir = SPIFFS.openDir("/");
-  while (dir.next()) {
-    Serial.print("\t");
-    Serial.print(dir.fileName());
-    Serial.print("\t");
-    File f = dir.openFile("r");
-    Serial.print(f.size());
-    Serial.println(" Bytes");
-    f.close();
+  if (!dir.next()) {
+    Serial.println("\t<empty>");
+  } else {
+    do {
+      Serial.print("\t");
+      Serial.print(dir.fileName());
+      Serial.print("\t");
+      File f = dir.openFile("r");
+      Serial.print(f.size());
+      Serial.println(" Bytes");
+      f.close();
+    } while(dir.next());
   }
-
+  //Format File System?
+  if (format) {
+    Serial.println("Formating filesystem...");
+    long ts = millis();
+    if(SPIFFS.format()) {
+      Serial.print("File System Formated (took ");
+      ts = millis() - ts;
+      Serial.print(ts / 1000);
+      Serial.print(",");
+      Serial.print(ts % 1000);
+      Serial.println("sec).");
+    } else {
+      Serial.println("File System Formatting Error");
+    }
+  }
   return true;
 }
