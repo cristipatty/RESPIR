@@ -1,4 +1,5 @@
-#include <Arduino.h>
+// comment TEST_RELIABILITY for normal use
+#define TEST_RELIABILITY
 
 // Needed for IR stuff
 #include <IRremoteESP8266.h>
@@ -27,6 +28,13 @@ IRrecv irrecv(RECV_PIN, CAPTURE_BUFFER_SIZE, TIMEOUT, true);
 IRsend irsend(IR_LED);  // Set the GPIO to be used to sending the message.
 decode_results results;  // Somewhere to store the results
 
+#ifdef TEST_RELIABILITY
+#include <Ticker.h>
+Ticker tester;
+decode_results resultsTest;
+void testReliability();
+#endif
+
 // The section of code run only once at start-up.
 void setup() {
   Serial.begin(BAUD_RATE, SERIAL_8N1, SERIAL_TX_ONLY);
@@ -49,7 +57,6 @@ void setup() {
   // Ignore messages with less than minimum on or off pulses.
   irrecv.setUnknownThreshold(MIN_UNKNOWN_SIZE);
   irrecv.enableIRIn();  // Start the receiver
-
 }
 
 void loop() {
@@ -57,11 +64,23 @@ void loop() {
 }
 
 long receiveAndReSendCounter = 0;
+long receiveAndReSendHash = 0;
 
 void irReceiveLoop() {
   // Check if the IR code has been received.
   if (irrecv.decode(&results)) {
     receiveAndReSendCounter ++;
+#ifdef TEST_RELIABILITY
+    // first received code - save-it for reliability test
+    if (receiveAndReSendCounter == 1) {
+      resultsTest.value = results.value;
+      resultsTest.rawlen = results.rawlen;
+      resultsTest.rawbuf = (uint16_t *)malloc(sizeof(uint16_t) * resultsTest.rawlen);
+      memcpy((uint16_t *)resultsTest.rawbuf, (uint16_t *)results.rawbuf, results.rawlen);
+      Serial.println("done saving buffers for testing");
+      tester.attach(2, testReliability);
+    }
+#endif
     // Display a crude timestamp.
     uint32_t now = millis();
     Serial.printf("Timestamp : %06u.%03u\n", now / 1000, now % 1000);
@@ -78,18 +97,29 @@ void irReceiveLoop() {
     Serial.println(resultToSourceCode(&results));
     Serial.println("");  // Blank line between entries
     Serial.print("IRCode hash: ");
-    Serial.println((long)(results.value));
+    Serial.printf("%lX\n", (long)(results.value));
     yield();  // Feed the WDT (again)
 
     // Test purposes:
     // re-send the last code, but avoid a send-receive infinite loop
-    // so call sendCode, after every other receive
+    // so call sendCode, after every other receive.
     if (receiveAndReSendCounter & 1) {
+      receiveAndReSendHash = (long)(results.value);
       Serial.print("receiveAndReSendCounter=");
       Serial.print(receiveAndReSendCounter);
       Serial.println(" will re-send code...");
-        // testing purpoes
+      delay(10);
       sendCode(&results);
+      yield();
+    } else { //Check also hash is the same, code re-sent is valid
+        if (receiveAndReSendHash != (long)(results.value)) {
+          Serial.print("Error: re-received hash ");
+          Serial.printf("%lX", (long)(results.value));
+          Serial.print(" doesn't match original ");
+          Serial.printf("%lX", receiveAndReSendHash);
+          Serial.println("   !!!");
+          yield();
+      }
     }
   }
 }
@@ -97,7 +127,7 @@ void irReceiveLoop() {
 void sendCode(const decode_results* results) {
   if ((long)(results->value) < -1L) {
     Serial.print("Code < 0: ");
-    Serial.print((long)(results->value));
+    Serial.printf("%lX", (long)(results->value));
     Serial.println(" is invalid!");
     return;
   }
@@ -137,6 +167,17 @@ void sendCode(const decode_results* results) {
 
   irsend.sendRaw(rawData, rawLength, IR_SEND_KHz);
 }
+
+#ifdef TEST_RELIABILITY
+// this will re-send the first received code
+// over and over again, to test reliability of hash-code and data
+long testCounter;
+void testReliability() {
+  testCounter ++;
+  Serial.printf("Test reliability ### %d\r\n", testCounter);
+  sendCode(&resultsTest);
+}
+#endif
 
 bool setupFS(bool format) {
   Serial.println("Mounting FS...");
