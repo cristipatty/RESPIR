@@ -1,5 +1,5 @@
 // comment TEST_RELIABILITY for normal use
-#define TEST_RELIABILITY
+//#define TEST_RELIABILITY
 
 // Needed for IR stuff
 #include <IRremoteESP8266.h>
@@ -63,16 +63,16 @@ void loop() {
   irReceiveLoop();
 }
 
-long receiveAndReSendCounter = 0;
+long receiveCounter = 0;
 long receiveAndReSendHash = 0;
 
 void irReceiveLoop() {
   // Check if the IR code has been received.
   if (irrecv.decode(&results)) {
-    receiveAndReSendCounter ++;
+    receiveCounter ++;
 #ifdef TEST_RELIABILITY
     // first received code - save-it for reliability test
-    if (receiveAndReSendCounter == 1) {
+    if (receiveCounter == 1) {
       resultsTest.value = results.value;
       resultsTest.rawlen = results.rawlen;
       resultsTest.rawbuf = (uint16_t *)malloc(sizeof(uint16_t) * resultsTest.rawlen);
@@ -83,34 +83,34 @@ void irReceiveLoop() {
 #endif
     // Display a crude timestamp.
     uint32_t now = millis();
-    Serial.printf("Timestamp : %06u.%03u\n", now / 1000, now % 1000);
+    const char * separator = "===========================";
+    Serial.printf("%s RECEIVED IR CODE #%3d %s%s%s%s\r\n", separator, receiveCounter,
+      separator, separator, separator, separator);
+    Serial.printf("Timestamp : %06u.%03u\r\n", now / 1000, now % 1000);
     if (results.overflow)
       Serial.printf("WARNING: IR code is too big for buffer (>= %d). "
                     "This result shouldn't be trusted until this is resolved. "
-                    "Edit & increase CAPTURE_BUFFER_SIZE.\n",
+                    "Edit & increase CAPTURE_BUFFER_SIZE.\r\n",
                     CAPTURE_BUFFER_SIZE);
     // Output RAW timing info of the result.
-    Serial.println(resultToTimingInfo(&results));
-    yield();  // Feed the WDT
+//    Serial.println(resultToTimingInfo(&results));
+//    yield();  // Feed the WDT
 
     // Output the results as source code
     Serial.println(resultToSourceCode(&results));
-    Serial.println("");  // Blank line between entries
     Serial.print("IRCode hash: ");
-    Serial.printf("%lX\n", (long)(results.value));
+    Serial.printf("%lX\r\n", (long)(results.value));
     yield();  // Feed the WDT (again)
 
     // Test purposes:
     // re-send the last code, but avoid a send-receive infinite loop
     // so call sendCode, after every other receive.
-    if (receiveAndReSendCounter & 1) {
+    if (receiveCounter & 1) {
       receiveAndReSendHash = (long)(results.value);
-      Serial.print("receiveAndReSendCounter=");
-      Serial.print(receiveAndReSendCounter);
-      Serial.println(" will re-send code...");
-      delay(10);
-      sendCode(&results);
-      yield();
+//      Serial.println(" will re-send code...");
+//      delay(10);
+//      sendCode(&results);
+//      yield();
     } else { //Check also hash is the same, code re-sent is valid
         if (receiveAndReSendHash != (long)(results.value)) {
           Serial.print("Error: re-received hash ");
@@ -125,12 +125,12 @@ void irReceiveLoop() {
 }
 
 void sendCode(const decode_results* results) {
-  if ((long)(results->value) < -1L) {
-    Serial.print("Code < 0: ");
-    Serial.printf("%lX", (long)(results->value));
-    Serial.println(" is invalid!");
-    return;
-  }
+//  if ((long)(results->value) < -1L) {
+//    Serial.print("Code < 0: ");
+//    Serial.printf("%lX", (long)(results->value));
+//    Serial.println(" is invalid!");
+//    return;
+//  }
   uint16_t rawLength = getCorrectedRawLength(results);
   uint16_t rawData[rawLength];
   uint16_t idx = 0;
